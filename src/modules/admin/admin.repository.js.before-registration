@@ -1,0 +1,115 @@
+const pool = require("../../config/database");
+
+async function findByEmail(email) {
+    const result = await pool.query(
+        `SELECT id, name, email, mobile, password_hash, is_active, created_at, updated_at
+         FROM admins
+         WHERE email = $1`,
+        [email]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function findById(id) {
+    const result = await pool.query(
+        `SELECT id, name, email, mobile, password_hash, is_active, created_at, updated_at
+         FROM admins
+         WHERE id = $1`,
+        [id]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function createAdmin({
+    id,
+    name,
+    email,
+    passwordHash,
+    mobile,
+    createdAt
+}) {
+    const result = await pool.query(
+        `INSERT INTO admins (
+            id,
+            name,
+            email,
+            password_hash,
+            mobile,
+            is_active,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, TRUE, $6, $6)
+        RETURNING id, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            name,
+            email,
+            passwordHash,
+            mobile,
+            createdAt
+        ]
+    );
+
+    return result.rows[0];
+}
+
+async function updateProfile({
+    id,
+    name,
+    email,
+    mobile,
+    updatedAt
+}) {
+    const result = await pool.query(
+        `UPDATE admins
+         SET
+            name = $2,
+            email = $3,
+            mobile = $4,
+            updated_at = $5
+         WHERE id = $1
+         RETURNING id, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            name,
+            email,
+            mobile,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function updatePassword({
+    id,
+    passwordHash,
+    updatedAt
+}) {
+    const result = await pool.query(
+        `UPDATE admins
+         SET
+            password_hash = $2,
+            updated_at = $3
+         WHERE id = $1
+         RETURNING id, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            passwordHash,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+module.exports = {
+    findByEmail,
+    findById,
+    createAdmin,
+    updateProfile,
+    updatePassword
+};

@@ -1,0 +1,211 @@
+const pool = require("../config/database");
+
+async function getClassTeacherClass(teacherId) {
+    const result = await pool.query(
+        `SELECT
+            tcs.class_id,
+            c.class_name,
+            c.class_code
+         FROM teacher_class_subjects tcs
+         JOIN classes c ON c.id = tcs.class_id
+         WHERE tcs.teacher_id = $1
+           AND tcs.is_class_teacher = TRUE
+           AND tcs.is_active = TRUE
+         LIMIT 1`,
+        [teacherId]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function requireClassTeacher(req, res, next) {
+    try {
+        if (!req.user || req.user.role !== "teacher") {
+            return res.status(403).json({
+                success: false,
+                message: "Class Teacher access required"
+            });
+        }
+
+        const classTeacherClass = await getClassTeacherClass(
+            req.user.id
+        );
+
+        if (!classTeacherClass) {
+            return res.status(403).json({
+                success: false,
+                message: "Teacher is not assigned as a Class Teacher"
+            });
+        }
+
+        req.classTeacher = {
+            classId: classTeacherClass.class_id,
+            className: classTeacherClass.class_name,
+            classCode: classTeacherClass.class_code
+        };
+
+        next();
+    } catch (error) {
+        console.error("Class Teacher authorization error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to verify Class Teacher access"
+        });
+    }
+}
+
+async function requireOwnClass(req, res, next) {
+    try {
+        if (!req.classTeacher) {
+            return res.status(403).json({
+                success: false,
+                message: "Class Teacher authorization required"
+            });
+        }
+
+        const requestedClassId =
+            req.params.classId ||
+            req.body.classId ||
+            req.query.classId;
+
+        if (!requestedClassId) {
+            return res.status(400).json({
+                success: false,
+                message: "classId is required"
+            });
+        }
+
+        if (requestedClassId !== req.classTeacher.classId) {
+            return res.status(403).json({
+                success: false,
+                message: "You can manage students only in your own class"
+            });
+        }
+
+        next();
+    } catch (error) {
+        console.error("Own class authorization error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to verify class access"
+        });
+    }
+}
+
+
+async function requireStudentOwnClass(req, res, next) {
+    try {
+        if (!req.classTeacher) {
+            return res.status(403).json({
+                success: false,
+                message: "Class Teacher authorization required"
+            });
+        }
+
+        const studentId = req.params.id;
+
+        const result = await pool.query(
+            `SELECT class_id
+             FROM students
+             WHERE id = $1`,
+            [studentId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Student not found"
+            });
+        }
+
+        if (result.rows[0].class_id !== req.classTeacher.classId) {
+            return res.status(403).json({
+                success: false,
+                message: "You can manage students only in your own class"
+            });
+        }
+
+        next();
+    } catch (error) {
+        console.error("Student class authorization error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to verify student class access"
+        });
+    }
+}
+
+module.exports = {
+    requireClassTeacher,
+    requireOwnClass,
+    requireStudentOwnClass,
+    getClassTeacherClass
+};
+
+async function requireAttendanceOwnClass(req, res, next) {
+    try {
+        if (!req.classTeacher) {
+            return res.status(403).json({
+                success: false,
+                message: "Class Teacher authorization required"
+            });
+        }
+
+        let classId = null;
+
+        if (req.params.studentId) {
+            const result = await pool.query(
+                `SELECT class_id
+                 FROM students
+                 WHERE id = $1`,
+                [req.params.studentId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Student not found"
+                });
+            }
+
+            classId = result.rows[0].class_id;
+        } else if (req.params.id) {
+            const result = await pool.query(
+                `SELECT class_id
+                 FROM attendance
+                 WHERE id = $1`,
+                [req.params.id]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Attendance record not found"
+                });
+            }
+
+            classId = result.rows[0].class_id;
+        }
+
+        if (classId !== req.classTeacher.classId) {
+            return res.status(403).json({
+                success: false,
+                message: "You can access attendance only for your own class"
+            });
+        }
+
+        next();
+    } catch (error) {
+        console.error("Attendance authorization error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to verify attendance access"
+        });
+    }
+}
+
+module.exports.requireAttendanceOwnClass = requireAttendanceOwnClass;

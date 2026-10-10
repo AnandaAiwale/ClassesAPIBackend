@@ -1,0 +1,229 @@
+const crypto = require("crypto");
+
+const repository = require("./students.repository");
+const classRepository = require("../classes/classes.repository");
+const { hashPassword } = require("../../utils/password");
+
+function generateStudentCode() {
+    return `STU${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+}
+
+async function generateUniqueStudentCode() {
+    let studentCode;
+
+    do {
+        studentCode = generateStudentCode();
+
+        const existingStudent =
+            await repository.findByStudentCode(studentCode);
+
+        if (!existingStudent) {
+            return studentCode;
+        }
+    } while (true);
+}
+
+async function getStudentsByClass(classId) {
+    const classData = await classRepository.findById(classId);
+
+    if (!classData) {
+        const error = new Error("Class not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.findAllByClass(classId);
+}
+
+async function getStudentById(id) {
+    const student = await repository.findById(id);
+
+    if (!student) {
+        const error = new Error("Student not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return student;
+}
+
+async function createStudent({
+    classId,
+    studentName,
+    parentName,
+    mobile = "",
+    rollNumber,
+    username,
+    password,
+    photoUrl = ""
+}) {
+    const classData = await classRepository.findById(classId);
+
+    if (!classData) {
+        const error = new Error("Class not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (!classData.is_active) {
+        const error = new Error("Class is inactive");
+        error.statusCode = 403;
+        throw error;
+    }
+
+    const normalizedUsername = String(username || "").trim().toLowerCase();
+    const normalizedRollNumber = String(rollNumber || "").trim();
+
+    const existingUsername =
+        await repository.findByUsername(normalizedUsername);
+
+    if (existingUsername) {
+        const error = new Error("Student username already exists");
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const existingRollNumber =
+        await repository.findByClassAndRollNumber(
+            classId,
+            normalizedRollNumber
+        );
+
+    if (existingRollNumber) {
+        const error = new Error(
+            "Roll number already exists in this class"
+        );
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const studentCode = await generateUniqueStudentCode();
+    const passwordHash = await hashPassword(password);
+
+    return repository.createStudent({
+        id: crypto.randomUUID(),
+        classId,
+        studentCode,
+        studentName: String(studentName).trim(),
+        parentName: String(parentName).trim(),
+        mobile: String(mobile).trim(),
+        rollNumber: normalizedRollNumber,
+        username: normalizedUsername,
+        passwordHash,
+        photoUrl: String(photoUrl || "").trim(),
+        createdAt: Date.now()
+    });
+}
+
+async function updateStudent(
+    id,
+    {
+        studentName,
+        parentName,
+        mobile = "",
+        rollNumber,
+        username,
+        photoUrl = ""
+    }
+) {
+    const existingStudent = await repository.findById(id);
+
+    if (!existingStudent) {
+        const error = new Error("Student not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const normalizedUsername = String(username || "").trim().toLowerCase();
+    const normalizedRollNumber = String(rollNumber || "").trim();
+
+    const usernameStudent =
+        await repository.findByUsername(normalizedUsername);
+
+    if (usernameStudent && usernameStudent.id !== id) {
+        const error = new Error("Student username already exists");
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const rollNumberStudent =
+        await repository.findByClassAndRollNumber(
+            existingStudent.class_id,
+            normalizedRollNumber
+        );
+
+    if (rollNumberStudent && rollNumberStudent.id !== id) {
+        const error = new Error(
+            "Roll number already exists in this class"
+        );
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return repository.updateStudent({
+        id,
+        studentName: String(studentName).trim(),
+        parentName: String(parentName).trim(),
+        mobile: String(mobile).trim(),
+        rollNumber: normalizedRollNumber,
+        username: normalizedUsername,
+        photoUrl: String(photoUrl || "").trim(),
+        updatedAt: Date.now()
+    });
+}
+
+async function updateStatus(id, isActive) {
+    const existingStudent = await repository.findById(id);
+
+    if (!existingStudent) {
+        const error = new Error("Student not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.updateStatus(
+        id,
+        isActive,
+        Date.now()
+    );
+}
+
+async function updatePassword(id, password) {
+    const existingStudent = await repository.findById(id);
+
+    if (!existingStudent) {
+        const error = new Error("Student not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const passwordHash = await hashPassword(password);
+
+    return repository.updatePassword(
+        id,
+        passwordHash,
+        Date.now()
+    );
+}
+
+async function deleteStudent(id) {
+    const existingStudent = await repository.findById(id);
+
+    if (!existingStudent) {
+        const error = new Error("Student not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.deleteStudent(id);
+}
+
+module.exports = {
+    getStudentsByClass,
+    getStudentById,
+    createStudent,
+    updateStudent,
+    updateStatus,
+    updatePassword,
+    deleteStudent
+};

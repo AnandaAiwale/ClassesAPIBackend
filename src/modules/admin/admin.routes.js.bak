@@ -1,0 +1,20 @@
+const express = require("express");
+const controller = require("./admin.controller");
+const { requireAdmin } = require("../../middleware/adminAuth");
+
+const router = express.Router();
+
+// Authentication
+router.post("/auth/create", controller.createAdmin);
+router.post("/auth/login", controller.login);
+router.post("/auth/send-otp", controller.sendOtp);
+router.post("/auth/verify-otp", controller.verifyOtp);
+
+// Admin profile
+router.get("/profile", requireAdmin, controller.getProfile);
+router.put("/profile", requireAdmin, controller.updateProfile);
+
+// Admin security
+router.put("/change-password", requireAdmin, controller.changePassword);
+
+module.exports = router;

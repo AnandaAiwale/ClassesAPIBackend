@@ -1,0 +1,122 @@
+const crypto = require("crypto");
+const repository = require("./classes.repository");
+
+function normalizeCode(value) {
+    return String(value || "").trim().toUpperCase();
+}
+
+async function getClasses() {
+    return repository.findAll();
+}
+
+async function getClassById(id) {
+    const classItem = await repository.findById(id);
+
+    if (!classItem) {
+        const error = new Error("Class not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return classItem;
+}
+
+async function createClass({
+    className,
+    classCode,
+    classTeacherId = null
+}) {
+    const normalizedCode = normalizeCode(classCode);
+
+    const existingClass = await repository.findByCode(normalizedCode);
+
+    if (existingClass) {
+        const error = new Error("Class code already exists");
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const now = Date.now();
+
+    return repository.createClass({
+        id: crypto.randomUUID(),
+        className: String(className).trim(),
+        classCode: normalizedCode,
+        classTeacherId,
+        createdAt: now
+    });
+}
+
+async function updateClass(
+    id,
+    {
+        className,
+        classCode,
+        classTeacherId = null
+    }
+) {
+    const existingClass = await repository.findById(id);
+
+    if (!existingClass) {
+        const error = new Error("Class not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const normalizedCode = normalizeCode(classCode);
+
+    const classWithCode = await repository.findByCode(normalizedCode);
+
+    if (classWithCode && classWithCode.id !== id) {
+        const error = new Error("Class code already exists");
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return repository.updateClass({
+        id,
+        className: String(className).trim(),
+        classCode: normalizedCode,
+        classTeacherId,
+        updatedAt: Date.now()
+    });
+}
+
+async function updateStatus(id, isActive) {
+    const existingClass = await repository.findById(id);
+
+    if (!existingClass) {
+        const error = new Error("Class not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.updateStatus(
+        id,
+        Boolean(isActive),
+        Date.now()
+    );
+}
+
+async function deleteClass(id) {
+    const existingClass = await repository.findById(id);
+
+    if (!existingClass) {
+        const error = new Error("Class not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.deleteClass(id);
+}
+
+module.exports = {
+    getClasses,
+    getClassById,
+    createClass,
+    updateClass,
+    updateStatus,
+    deleteClass
+};
+
+

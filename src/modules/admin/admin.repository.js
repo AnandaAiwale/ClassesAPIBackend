@@ -1,0 +1,128 @@
+const pool = require("../../config/database");
+
+const ADMIN_FIELDS = `
+    id, admin_uid, name, email, mobile, email_verified,
+    password_hash, is_active, created_at, updated_at
+`;
+
+async function findByEmail(email) {
+    const result = await pool.query(
+        `SELECT ${ADMIN_FIELDS} FROM admins WHERE LOWER(email) = LOWER($1)`,
+        [email]
+    );
+    return result.rows[0] || null;
+}
+
+async function findById(id) {
+    const result = await pool.query(
+        `SELECT ${ADMIN_FIELDS} FROM admins WHERE id = $1`,
+        [id]
+    );
+    return result.rows[0] || null;
+}
+
+
+async function findByAdminUid(adminUid) {
+    const result = await pool.query(
+        `SELECT ${ADMIN_FIELDS} FROM admins WHERE admin_uid = $1`,
+        [adminUid]
+    );
+    return result.rows[0] || null;
+}
+
+async function insertAdmin(db, {
+    id, name, email, passwordHash, mobile = "", createdAt
+}) {
+    const result = await db.query(
+        `INSERT INTO admins (
+            id, admin_uid, name, email, password_hash, mobile,
+            email_verified, is_active, created_at, updated_at
+        )
+        VALUES (
+            $1, 'ADM-' || nextval('admin_uid_seq'),
+            $2, LOWER($3), $4, $5, TRUE, TRUE, $6, $6
+        )
+        RETURNING id, admin_uid, name, email, mobile,
+                  email_verified, is_active, created_at, updated_at`,
+        [id, name, email, passwordHash, mobile, createdAt]
+    );
+    return result.rows[0];
+}
+
+async function createAdmin(data) {
+    return insertAdmin(pool, data);
+}
+
+async function createAdminWithClient(client, data) {
+    return insertAdmin(client, data);
+}
+
+async function updateProfile({
+    id, name, email, mobile, updatedAt
+}) {
+    const result = await pool.query(
+        `UPDATE admins
+         SET name = $2, email = LOWER($3), mobile = $4, updated_at = $5
+         WHERE id = $1
+         RETURNING id, admin_uid, name, email, mobile,
+                   email_verified, is_active, created_at, updated_at`,
+        [id, name, email, mobile, updatedAt]
+    );
+    return result.rows[0] || null;
+}
+
+async function updatePassword({ id, passwordHash, updatedAt }) {
+    const result = await pool.query(
+        `UPDATE admins
+         SET password_hash = $2, updated_at = $3
+         WHERE id = $1
+         RETURNING id, admin_uid, name, email, mobile,
+                   email_verified, is_active, created_at, updated_at`,
+        [id, passwordHash, updatedAt]
+    );
+    return result.rows[0] || null;
+}
+
+
+async function deactivateByAdminUid(adminUid, updatedAt) {
+    const result = await pool.query(
+        `UPDATE admins
+         SET is_active = FALSE, updated_at = $2
+         WHERE admin_uid = $1 AND is_active = TRUE
+         RETURNING id, admin_uid, name, email, is_active, updated_at`,
+        [adminUid, updatedAt]
+    );
+    return result.rows[0] || null;
+}
+
+
+async function requestDeletion(adminUid, requestedAt) {
+    const scheduledAt = requestedAt + (24 * 60 * 60 * 1000);
+
+    const result = await pool.query(
+        `UPDATE admins
+         SET deletion_requested_at = $2,
+             deletion_scheduled_at = $3,
+             is_active = FALSE,
+             updated_at = $2
+         WHERE admin_uid = $1
+           AND is_active = TRUE
+           AND deletion_scheduled_at IS NULL
+         RETURNING admin_uid, deletion_requested_at, deletion_scheduled_at`,
+        [adminUid, requestedAt, scheduledAt]
+    );
+
+    return result.rows[0] || null;
+}
+
+module.exports = {
+    requestDeletion,
+    findByEmail,
+    findById,
+    findByAdminUid,
+    createAdmin,
+    createAdminWithClient,
+    updateProfile,
+    updatePassword,
+    deactivateByAdminUid
+};

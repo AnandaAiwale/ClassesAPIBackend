@@ -1,0 +1,174 @@
+const pool = require("../../config/database");
+
+async function findAll() {
+    const result = await pool.query(
+        `SELECT
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at
+         FROM classes
+         ORDER BY class_name ASC`
+    );
+
+    return result.rows;
+}
+
+async function findById(id) {
+    const result = await pool.query(
+        `SELECT
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at
+         FROM classes
+         WHERE id = $1`,
+        [id]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function findByCode(classCode) {
+    const result = await pool.query(
+        `SELECT
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at
+         FROM classes
+         WHERE class_code = $1`,
+        [classCode]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function createClass({
+    id,
+    className,
+    classCode,
+    classTeacherId,
+    createdAt
+}) {
+    const result = await pool.query(
+        `INSERT INTO classes (
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, TRUE, $5, $5)
+        RETURNING
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at`,
+        [
+            id,
+            className,
+            classCode,
+            classTeacherId || null,
+            createdAt
+        ]
+    );
+
+    return result.rows[0];
+}
+
+async function updateClass({
+    id,
+    className,
+    classCode,
+    classTeacherId,
+    updatedAt
+}) {
+    const result = await pool.query(
+        `UPDATE classes
+         SET
+            class_name = $2,
+            class_code = $3,
+            class_teacher_id = $4,
+            updated_at = $5
+         WHERE id = $1
+         RETURNING
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at`,
+        [
+            id,
+            className,
+            classCode,
+            classTeacherId || null,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function updateStatus(id, isActive, updatedAt) {
+    const result = await pool.query(
+        `UPDATE classes
+         SET
+            is_active = $2,
+            updated_at = $3
+         WHERE id = $1
+         RETURNING
+            id,
+            class_name,
+            class_code,
+            class_teacher_id,
+            is_active,
+            created_at,
+            updated_at`,
+        [
+            id,
+            isActive,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function deleteClass(id) {
+    const result = await pool.query(
+        `DELETE FROM classes
+         WHERE id = $1
+         RETURNING id`
+        ,
+        [id]
+    );
+
+    return result.rows[0] || null;
+}
+
+module.exports = {
+    findAll,
+    findById,
+    findByCode,
+    createClass,
+    updateClass,
+    updateStatus,
+    deleteClass
+};

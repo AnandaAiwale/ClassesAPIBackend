@@ -1,0 +1,77 @@
+const pool = require("../config/database");
+const { verifyToken } = require("../utils/jwt");
+
+async function authenticateToken(req, res, next) {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+            success: false,
+            message: "Access token required"
+        });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    try {
+        const user = verifyToken(token);
+
+        if (!user.id || !user.role) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid token"
+            });
+        }
+
+        const tableMap = {
+            admin: "admins",
+            teacher: "teachers",
+            student: "students"
+        };
+
+        const table = tableMap[user.role];
+
+        if (!table) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid token role"
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT id, is_active
+             FROM ${table}
+             WHERE id = $1
+             LIMIT 1`,
+            [user.id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: "Account not found"
+            });
+        }
+
+        if (!result.rows[0].is_active) {
+            return res.status(403).json({
+                success: false,
+                message: "Account is inactive"
+            });
+        }
+
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error("Authentication error:", error);
+
+        return res.status(401).json({
+            success: false,
+            message: "Invalid or expired token"
+        });
+    }
+}
+
+module.exports = {
+    authenticateToken
+};

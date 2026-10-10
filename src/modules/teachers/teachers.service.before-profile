@@ -1,0 +1,163 @@
+const crypto = require("crypto");
+
+const repository = require("./teachers.repository");
+const { hashPassword } = require("../../utils/password");
+
+function createTeacherCode() {
+    const randomPart = crypto.randomBytes(3).toString("hex").toUpperCase();
+    return `TCH${randomPart}`;
+}
+
+async function generateUniqueTeacherCode() {
+    let teacherCode;
+
+    do {
+        teacherCode = createTeacherCode();
+        const existingTeacher = await repository.findByTeacherCode(teacherCode);
+
+        if (!existingTeacher) {
+            return teacherCode;
+        }
+    } while (true);
+}
+
+async function getTeachers() {
+    return repository.findAll();
+}
+
+async function getTeacherById(id) {
+    const teacher = await repository.findById(id);
+
+    if (!teacher) {
+        const error = new Error("Teacher not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return teacher;
+}
+
+async function createTeacher({
+    name,
+    email,
+    mobile = "",
+    password
+}) {
+    const normalizedName = String(name || "").trim();
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedMobile = String(mobile || "").trim();
+
+    const existingTeacher = await repository.findByEmail(normalizedEmail);
+
+    if (existingTeacher) {
+        const error = new Error("Teacher email already exists");
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const teacherCode = await generateUniqueTeacherCode();
+    const passwordHash = await hashPassword(password);
+
+    return repository.createTeacher({
+        id: crypto.randomUUID(),
+        teacherCode,
+        name: normalizedName,
+        email: normalizedEmail,
+        mobile: normalizedMobile,
+        passwordHash,
+        createdAt: Date.now()
+    });
+}
+
+async function updateTeacher(
+    id,
+    {
+        name,
+        email,
+        mobile = ""
+    }
+) {
+    const existingTeacher = await repository.findById(id);
+
+    if (!existingTeacher) {
+        const error = new Error("Teacher not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const normalizedName = String(name || "").trim();
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedMobile = String(mobile || "").trim();
+
+    const teacherWithEmail = await repository.findByEmail(normalizedEmail);
+
+    if (teacherWithEmail && teacherWithEmail.id !== id) {
+        const error = new Error("Teacher email already exists");
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return repository.updateTeacher({
+        id,
+        name: normalizedName,
+        email: normalizedEmail,
+        mobile: normalizedMobile,
+        updatedAt: Date.now()
+    });
+}
+
+async function updateStatus(id, isActive) {
+    const existingTeacher = await repository.findById(id);
+
+    if (!existingTeacher) {
+        const error = new Error("Teacher not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.updateStatus(
+        id,
+        isActive,
+        Date.now()
+    );
+}
+
+async function updatePassword(id, password) {
+    const existingTeacher = await repository.findById(id);
+
+    if (!existingTeacher) {
+        const error = new Error("Teacher not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    const passwordHash = await hashPassword(password);
+
+    return repository.updatePassword(
+        id,
+        passwordHash,
+        Date.now()
+    );
+}
+
+async function deleteTeacher(id) {
+    const existingTeacher = await repository.findById(id);
+
+    if (!existingTeacher) {
+        const error = new Error("Teacher not found");
+        error.statusCode = 404;
+        throw error;
+    }
+
+    return repository.deleteTeacher(id);
+}
+
+module.exports = {
+    getTeachers,
+    getTeacherById,
+    createTeacher,
+    updateTeacher,
+    updateStatus,
+    updatePassword,
+    deleteTeacher
+};

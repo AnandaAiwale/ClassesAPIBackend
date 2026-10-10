@@ -1,0 +1,172 @@
+const service = require("./classes.service");
+
+async function getClasses(req, res) {
+    try {
+        const classes = await service.getClasses();
+
+        return res.json({
+            success: true,
+            classes
+        });
+    } catch (error) {
+        console.error("Get classes error:", error);
+
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error"
+        });
+    }
+}
+
+async function getClassById(req, res) {
+    try {
+        const classItem = await service.getClassById(req.params.id);
+
+        return res.json({
+            success: true,
+            class: classItem
+        });
+    } catch (error) {
+        console.error("Get class error:", error);
+
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error"
+        });
+    }
+}
+
+async function createClass(req, res) {
+    try {
+        const {
+            className,
+            classCode,
+            classTeacherId
+        } = req.body;
+
+        if (!className || !classCode) {
+            return res.status(400).json({
+                success: false,
+                message: "Class name and class code are required"
+            });
+        }
+
+        const classItem = await service.createClass({
+            className,
+            classCode,
+            classTeacherId
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Class created successfully",
+            class: classItem
+        });
+    } catch (error) {
+        console.error("Create class error:", error);
+
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error"
+        });
+    }
+}
+
+async function updateClass(req, res) {
+    try {
+        const {
+            className,
+            classCode,
+            classTeacherId
+        } = req.body;
+
+        if (!className || !classCode) {
+            return res.status(400).json({
+                success: false,
+                message: "Class name and class code are required"
+            });
+        }
+
+        const classItem = await service.updateClass(
+            req.params.id,
+            {
+                className,
+                classCode,
+                classTeacherId
+            }
+        );
+
+        return res.json({
+            success: true,
+            message: "Class updated successfully",
+            class: classItem
+        });
+    } catch (error) {
+        console.error("Update class error:", error);
+
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error"
+        });
+    }
+}
+
+async function updateClassStatus(req, res) {
+    try {
+        const { isActive } = req.body;
+
+        if (typeof isActive !== "boolean") {
+            return res.status(400).json({
+                success: false,
+                message: "isActive must be true or false"
+            });
+        }
+
+        const classItem = await service.updateStatus(
+            req.params.id,
+            isActive
+        );
+
+        return res.json({
+            success: true,
+            message: isActive
+                ? "Class enabled successfully"
+                : "Class disabled successfully",
+            class: classItem
+        });
+    } catch (error) {
+        console.error("Update class status error:", error);
+
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error"
+        });
+    }
+}
+
+async function deleteClass(req, res) {
+    try {
+        await service.deleteClass(req.params.id);
+
+        return res.json({
+            success: true,
+            message: "Class deleted successfully"
+        });
+    } catch (error) {
+        console.error("Delete class error:", error);
+
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error"
+        });
+    }
+}
+
+module.exports = {
+    getClasses,
+    getClassById,
+    createClass,
+    updateClass,
+    updateClassStatus,
+    deleteClass
+};

@@ -1,0 +1,165 @@
+const pool = require("../../config/database");
+
+async function findAll() {
+    const result = await pool.query(
+        `SELECT id, teacher_code, name, email, mobile, is_active, created_at, updated_at
+         FROM teachers
+         ORDER BY name ASC`
+    );
+
+    return result.rows;
+}
+
+async function findById(id) {
+    const result = await pool.query(
+        `SELECT id, teacher_code, name, email, mobile, password_hash, is_active, created_at, updated_at
+         FROM teachers
+         WHERE id = $1`,
+        [id]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function findByEmail(email) {
+    const result = await pool.query(
+        `SELECT id, teacher_code, name, email, mobile, password_hash, is_active, created_at, updated_at
+         FROM teachers
+         WHERE LOWER(email) = LOWER($1)`,
+        [email]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function findByTeacherCode(teacherCode) {
+    const result = await pool.query(
+        `SELECT id, teacher_code, name, email, mobile, password_hash, is_active, created_at, updated_at
+         FROM teachers
+         WHERE UPPER(teacher_code) = UPPER($1)`,
+        [teacherCode]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function createTeacher({
+    id,
+    teacherCode,
+    name,
+    email,
+    mobile,
+    passwordHash,
+    createdAt
+}) {
+    const result = await pool.query(
+        `INSERT INTO teachers (
+            id,
+            teacher_code,
+            name,
+            email,
+            mobile,
+            password_hash,
+            is_active,
+            created_at,
+            updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $7)
+        RETURNING id, teacher_code, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            teacherCode,
+            name,
+            email,
+            mobile,
+            passwordHash,
+            createdAt
+        ]
+    );
+
+    return result.rows[0];
+}
+
+async function updateTeacher({
+    id,
+    name,
+    email,
+    mobile,
+    updatedAt
+}) {
+    const result = await pool.query(
+        `UPDATE teachers
+         SET name = $2,
+             email = $3,
+             mobile = $4,
+             updated_at = $5
+         WHERE id = $1
+         RETURNING id, teacher_code, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            name,
+            email,
+            mobile,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function updateStatus(id, isActive, updatedAt) {
+    const result = await pool.query(
+        `UPDATE teachers
+         SET is_active = $2,
+             updated_at = $3
+         WHERE id = $1
+         RETURNING id, teacher_code, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            isActive,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function updatePassword(id, passwordHash, updatedAt) {
+    const result = await pool.query(
+        `UPDATE teachers
+         SET password_hash = $2,
+             updated_at = $3
+         WHERE id = $1
+         RETURNING id, teacher_code, name, email, mobile, is_active, created_at, updated_at`,
+        [
+            id,
+            passwordHash,
+            updatedAt
+        ]
+    );
+
+    return result.rows[0] || null;
+}
+
+async function deleteTeacher(id) {
+    const result = await pool.query(
+        `DELETE FROM teachers
+         WHERE id = $1
+         RETURNING id`,
+        [id]
+    );
+
+    return result.rows[0] || null;
+}
+
+module.exports = {
+    findAll,
+    findById,
+    findByEmail,
+    findByTeacherCode,
+    createTeacher,
+    updateTeacher,
+    updateStatus,
+    updatePassword,
+    deleteTeacher
+};

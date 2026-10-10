@@ -1,0 +1,273 @@
+const homeworkService = require("./homework.service");
+
+async function getHomeworkById(req, res) {
+    try {
+        const data = await homeworkService.getHomeworkById(
+            req.params.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        console.error("Get homework error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to get homework"
+        });
+    }
+}
+
+async function getTeacherHomework(req, res) {
+    try {
+        const data =
+            await homeworkService.getTeacherHomework(
+                req.user.id
+            );
+
+        return res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        console.error("Get teacher homework error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to get homework"
+        });
+    }
+}
+
+async function getClassSubjectHomework(req, res) {
+    try {
+        const data =
+            await homeworkService.getClassSubjectHomework(
+                req.params.classId,
+                req.params.subjectId
+            );
+
+        return res.status(200).json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        console.error("Get class subject homework error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to get homework"
+        });
+    }
+}
+
+async function createHomework(req, res) {
+    try {
+        const {
+            classId,
+            subjectId,
+            homeworkDate,
+            homeworkText,
+            published
+        } = req.body;
+
+        const data =
+            await homeworkService.createHomework({
+                teacherId: req.user.id,
+                classId,
+                subjectId,
+                homeworkDate,
+                homeworkText,
+                published
+            });
+
+        return res.status(201).json({
+            success: true,
+            message: "Homework created successfully",
+            data
+        });
+    } catch (error) {
+        console.error("Create homework error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to create homework"
+        });
+    }
+}
+
+async function updateHomework(req, res) {
+    try {
+        const {
+            homeworkDate,
+            homeworkText
+        } = req.body;
+
+        const data =
+            await homeworkService.updateHomework({
+                id: req.params.id,
+                teacherId: req.user.id,
+                homeworkDate,
+                homeworkText
+            });
+
+        return res.status(200).json({
+            success: true,
+            message: "Homework updated successfully",
+            data
+        });
+    } catch (error) {
+        console.error("Update homework error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to update homework"
+        });
+    }
+}
+
+async function updatePublished(req, res) {
+    try {
+        const { published } = req.body;
+
+        const data =
+            await homeworkService.updatePublished({
+                id: req.params.id,
+                teacherId: req.user.id,
+                published
+            });
+
+        return res.status(200).json({
+            success: true,
+            message: "Homework publish status updated successfully",
+            data
+        });
+    } catch (error) {
+        console.error("Update homework publish status error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message:
+                error.message ||
+                "Unable to update homework publish status"
+        });
+    }
+}
+
+async function deleteHomework(req, res) {
+    try {
+        await homeworkService.deleteHomework(
+            req.params.id,
+            req.user.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Homework deleted successfully"
+        });
+    } catch (error) {
+        console.error("Delete homework error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: error.message || "Unable to delete homework"
+        });
+    }
+}
+
+async function addImage(req, res) {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "Image file is required"
+            });
+        }
+
+        const imageUrl =
+            `/uploads/homework/${req.file.filename}`;
+
+        const data =
+            await homeworkService.addImage({
+                homeworkId: req.params.id,
+                teacherId: req.user.id,
+                imageUrl,
+                fileName: req.file.originalname,
+                imageOrder: req.body.imageOrder
+            });
+
+        return res.status(201).json({
+            success: true,
+            message: "Homework image uploaded successfully",
+            data
+        });
+    } catch (error) {
+        console.error("Add homework image error:", error);
+
+        if (req.file) {
+            const fs = require("fs");
+            const path = require("path");
+
+            const uploadedFile = path.join(
+                __dirname,
+                "../../../uploads/homework",
+                req.file.filename
+            );
+
+            try {
+                if (fs.existsSync(uploadedFile)) {
+                    fs.unlinkSync(uploadedFile);
+                }
+            } catch (cleanupError) {
+                console.error(
+                    "Uploaded file cleanup error:",
+                    cleanupError
+                );
+            }
+        }
+
+        return res.status(400).json({
+            success: false,
+            message:
+                error.message ||
+                "Unable to upload homework image"
+        });
+    }
+}
+
+async function deleteImage(req, res) {
+    try {
+        await homeworkService.deleteImage(
+            req.params.imageId,
+            req.user.id
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Homework image deleted successfully"
+        });
+    } catch (error) {
+        console.error("Delete homework image error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message:
+                error.message ||
+                "Unable to delete homework image"
+        });
+    }
+}
+
+module.exports = {
+    getHomeworkById,
+    getTeacherHomework,
+    getClassSubjectHomework,
+    createHomework,
+    updateHomework,
+    updatePublished,
+    deleteHomework,
+    addImage,
+    deleteImage
+};

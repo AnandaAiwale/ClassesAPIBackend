@@ -1,0 +1,2068 @@
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const cors = require("cors");
+const pool = require("./db");
+require("dotenv").config();
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(
+    "/uploads",
+    express.static(path.join(__dirname, "uploads"))
+);
+/*
+========================================
+HEALTH CHECK
+========================================
+*/
+
+app.get("/api/health", (req, res) => {
+    res.json({
+        success: true,
+        message: "Class API is working"
+    });
+});
+
+
+/*
+========================================
+JWT AUTHENTICATION
+========================================
+*/
+
+function authenticateToken(req, res, next) {
+
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+            success: false,
+            message: "Access token required"
+        });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    try {
+
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET
+        );
+
+        req.user = decoded;
+
+        next();
+
+    } catch (error) {
+
+        return res.status(401).json({
+            success: false,
+            message: "Invalid or expired token"
+        });
+    }
+}
+
+
+const uploadDir = path.join(__dirname, "uploads", "homework");
+
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadDir);
+    },
+
+    filename: function (req, file, cb) {
+        const extension = path.extname(file.originalname);
+        const fileName = `${crypto.randomUUID()}${extension}`;
+
+        cb(null, fileName);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024
+    },
+    fileFilter: function (req, file, cb) {
+        if (file.mimetype.startsWith("image/")) {
+            cb(null, true);
+        } else {
+            cb(new Error("Only image files are allowed"));
+        }
+    }
+});
+
+
+// ===============================
+// DELETE STUDENT
+// ===============================
+app.delete("/api/students/:id", authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Make sure the student belongs to logged-in teacher
+        const studentResult = await pool.query(
+            `SELECT id, student_name
+             FROM students
+             WHERE id = $1 AND teacher_id = $2`,
+            [id, req.user.id]
+        );
+
+        if (studentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Student not found"
+            });
+        }
+
+        const student = studentResult.rows[0];
+
+        await pool.query(
+            `DELETE FROM students
+             WHERE id = $1 AND teacher_id = $2`,
+            [id, req.user.id]
+        );
+
+        return res.json({
+            success: true,
+            message: "Student deleted successfully",
+            student: {
+                id: student.id,
+                studentName: student.student_name
+            }
+        });
+
+    } catch (error) {
+        console.error("Delete student error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+
+// ===============================
+// EDIT STUDENT
+// ===============================
+app.put("/api/students/:id", authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const {
+            studentName,
+            parentName,
+            mobile,
+            rollNumber,
+            username,
+            password,
+            photoUrl
+        } = req.body;
+
+        // Check if student exists and belongs to logged-in teacher
+        const studentResult = await pool.query(
+            `SELECT id, teacher_id
+             FROM students
+             WHERE id = $1 AND teacher_id = $2`,
+            [id, req.user.id]
+        );
+
+        if (studentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Student not found"
+            });
+        }
+
+        // Build update fields dynamically
+        const fields = [];
+        const values = [];
+        let index = 1;
+
+        if (studentName !== undefined) {
+            fields.push(`student_name = $${index++}`);
+            values.push(studentName);
+        }
+
+        if (parentName !== undefined) {
+            fields.push(`parent_name = $${index++}`);
+            values.push(parentName);
+        }
+
+        if (mobile !== undefined) {
+            fields.push(`mobile = $${index++}`);
+            values.push(mobile);
+        }
+
+        if (rollNumber !== undefined) {
+            fields.push(`roll_number = $${index++}`);
+            values.push(rollNumber);
+        }
+
+        if (username !== undefined) {
+            fields.push(`username = $${index++}`);
+            values.push(username);
+        }
+
+        if (photoUrl !== undefined) {
+            fields.push(`photo_url = $${index++}`);
+            values.push(photoUrl);
+        }
+
+        // Only update password if a new password is provided
+        if (password !== undefined && password !== "") {
+            const passwordHash = await bcrypt.hash(password, 10);
+
+            fields.push(`password_hash = $${index++}`);
+            values.push(passwordHash);
+        }
+
+        if (fields.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "No fields provided for update"
+            });
+        }
+
+        values.push(id);
+        values.push(req.user.id);
+
+        const result = await pool.query(
+            `UPDATE students
+             SET ${fields.join(", ")}
+             WHERE id = $${index++}
+             AND teacher_id = $${index}
+             RETURNING
+                id,
+                teacher_id,
+                student_name,
+                parent_name,
+                mobile,
+                roll_number,
+                username,
+                photo_url,
+                created_at`,
+            values
+        );
+
+        return res.json({
+            success: true,
+            message: "Student updated successfully",
+            student: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error("Edit student error:", error);
+
+        // Duplicate username
+        if (error.code === "23505") {
+            return res.status(409).json({
+                success: false,
+                message: "This email is already registered for a student in your class."
+            });
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+/*
+========================================
+TEACHER REGISTER
+========================================
+*/
+
+app.post("/api/auth/register", async (req, res) => {
+
+    try {
+
+        const {
+            name,
+            email,
+            password,
+            className,
+            subject,
+            classTiming,
+            description,
+            mobile
+        } = req.body;
+
+        if (!name || !email || !password) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Name, email and password are required"
+            });
+        }
+
+        const existingTeacher = await pool.query(
+            "SELECT id FROM teachers WHERE email = $1",
+            [email]
+        );
+
+        if (existingTeacher.rows.length > 0) {
+
+            return res.status(409).json({
+                success: false,
+                message: "Email already registered"
+            });
+        }
+
+        const passwordHash = await bcrypt.hash(
+            password,
+            10
+        );
+
+        const teacherId = crypto.randomUUID();
+
+        const createdAt = Date.now();
+
+        const result = await pool.query(
+            `INSERT INTO teachers
+            (
+                id,
+                name,
+                email,
+                password_hash,
+                class_name,
+                subject,
+                class_timing,
+                description,
+                mobile,
+                setup_complete,
+                created_at
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            RETURNING
+                id,
+                name,
+                email,
+                class_name,
+                subject,
+                class_timing,
+                description,
+                mobile,
+                setup_complete,
+                created_at`,
+            [
+                teacherId,
+                name,
+                email,
+                passwordHash,
+                className || "",
+                subject || "",
+                classTiming || "",
+                description || "",
+                mobile || "",
+                false,
+                createdAt
+            ]
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Teacher registered successfully",
+            teacher: result.rows[0]
+        });
+
+    } catch (error) {
+
+        console.error("Register error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+/*
+========================================
+TEACHER LOGIN
+========================================
+*/
+
+app.post("/api/auth/login", async (req, res) => {
+
+    try {
+
+        const {
+            email,
+            password
+        } = req.body;
+
+        if (!email || !password) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Email and password are required"
+            });
+        }
+
+        const result = await pool.query(
+            "SELECT * FROM teachers WHERE email = $1",
+            [email]
+        );
+
+        if (result.rows.length === 0) {
+
+            return res.status(401).json({
+                success: false,
+                message: "Invalid email or password"
+            });
+        }
+
+        const teacher = result.rows[0];
+
+        const passwordValid = await bcrypt.compare(
+            password,
+            teacher.password_hash
+        );
+
+        if (!passwordValid) {
+
+            return res.status(401).json({
+                success: false,
+                message: "Invalid email or password"
+            });
+        }
+
+        const token = jwt.sign(
+            {
+                teacherId: teacher.id,
+                email: teacher.email
+            },
+            process.env.JWT_SECRET,
+            {
+                expiresIn: "7d"
+            }
+        );
+
+        res.json({
+            success: true,
+            token,
+            teacher: {
+                id: teacher.id,
+                name: teacher.name,
+                email: teacher.email,
+                className: teacher.class_name,
+                subject: teacher.subject,
+                classTiming: teacher.class_timing,
+                description: teacher.description,
+                setupComplete: teacher.setup_complete
+            }
+        });
+
+    } catch (error) {
+
+        console.error("Login error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+// ===============================
+// STUDENT LOGIN
+// ===============================
+app.post("/api/student/auth/login", async (req, res) => {
+    try {
+        const { email, className, password } = req.body;
+
+        if (!email || !className || !password) {
+            return res.status(400).json({
+                success: false,
+                message: "Email, class name and password are required"
+            });
+        }
+
+        const result = await pool.query(
+            `SELECT
+                s.id,
+                s.teacher_id,
+                s.student_name,
+                s.parent_name,
+                s.mobile,
+                s.roll_number,
+                s.email,
+                s.password_hash,
+                s.photo_url,
+                t.name AS teacher_name,
+                t.email AS teacher_email,
+                t.mobile AS teacher_mobile,
+                t.class_name AS teacher_class_name
+             FROM students s
+             JOIN teachers t
+               ON t.id = s.teacher_id
+             WHERE s.email = $1
+               AND t.class_name = $2`,
+            [email, className]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid email, class or password"
+            });
+        }
+
+        const student = result.rows[0];
+
+        const passwordValid = await bcrypt.compare(
+            password,
+            student.password_hash
+        );
+
+        if (!passwordValid) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid email, class or password"
+            });
+        }
+
+        const token = jwt.sign(
+            {
+                id: student.id,
+                role: "student",
+                teacherId: student.teacher_id
+            },
+            process.env.JWT_SECRET,
+            {
+                expiresIn: "7d"
+            }
+        );
+
+        return res.json({
+            success: true,
+            message: "Student login successful",
+            token,
+            student: {
+                id: student.id,
+                teacherId: student.teacher_id,
+                studentName: student.student_name,
+                parentName: student.parent_name,
+                mobile: student.mobile,
+                rollNumber: student.roll_number,
+                email: student.email,
+                photoUrl: student.photo_url
+            },
+            teacher: {
+                name: student.teacher_name,
+                email: student.teacher_email,
+                mobile: student.teacher_mobile,
+                className: student.teacher_class_name
+            }
+        });
+
+    } catch (error) {
+        console.error("Student login error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+
+
+// ===============================
+// STUDENT - GET TEACHER INFO
+// ===============================
+
+app.get(
+    "/api/student/teacher",
+    authenticateToken,
+    async (req, res) => {
+        try {
+            if (req.user.role !== "student") {
+                return res.status(403).json({
+                    success: false,
+                    message: "Student access required"
+                });
+            }
+
+            const result = await pool.query(
+                `SELECT
+                    name,
+                    email,
+                    mobile,
+                    class_name
+                 FROM teachers
+                 WHERE id = $1`,
+                [req.user.teacherId]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Teacher not found"
+                });
+            }
+
+            const teacher = result.rows[0];
+
+            return res.json({
+                success: true,
+                teacher: {
+                    name: teacher.name,
+                    email: teacher.email,
+                    mobile: teacher.mobile,
+                    className: teacher.class_name
+                }
+            });
+
+        } catch (error) {
+            console.error("Student teacher info error:", error);
+
+            return res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+GET CURRENT TEACHER
+========================================
+*/
+
+app.get(
+    "/api/auth/me",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+            const result = await pool.query(
+                `SELECT
+                    id,
+                    name,
+                    email,
+                    class_name,
+                    subject,
+                    class_timing,
+                    description,
+                    setup_complete,
+                    created_at
+                 FROM teachers
+                 WHERE id = $1`,
+                [req.user.teacherId]
+            );
+
+            if (result.rows.length === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message: "Teacher not found"
+                });
+            }
+
+            res.json({
+                success: true,
+                teacher: result.rows[0]
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+ADD STUDENT
+========================================
+*/
+
+app.post(
+    "/api/students",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const {
+                studentName,
+                parentName,
+                mobile,
+                rollNumber,
+                email,
+                password,
+                photoUrl
+            } = req.body;
+
+            if (
+                !studentName ||
+                !parentName ||
+                !mobile ||
+                !rollNumber ||
+                !email ||
+                !password
+            ) {
+
+                return res.status(400).json({
+                    success: false,
+                    message: "All student fields are required"
+                });
+            }
+
+            const existingStudent = await pool.query(
+                "SELECT id FROM students WHERE email = $1 AND teacher_id = $2",
+                [email, req.user.teacherId]
+            );
+
+            if (existingStudent.rows.length > 0) {
+
+                return res.status(409).json({
+                    success: false,
+                    message: "Username already exists"
+                });
+            }
+
+            const studentId = crypto.randomUUID();
+
+            const passwordHash = await bcrypt.hash(
+                password,
+                10
+            );
+
+            const result = await pool.query(
+                `INSERT INTO students
+                (
+                    id,
+                    teacher_id,
+                    student_name,
+                    parent_name,
+                    mobile,
+                    roll_number,
+                    email,
+                    password_hash,
+                    photo_url,
+                    created_at
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                RETURNING
+                    id,
+                    teacher_id,
+                    student_name,
+                    parent_name,
+                    mobile,
+                    roll_number,
+                    email,
+                    photo_url,
+                    created_at`,
+                [
+                    studentId,
+                    req.user.teacherId,
+                    studentName,
+                    parentName,
+                    mobile,
+                    rollNumber,
+                    email,
+                    passwordHash,
+                    photoUrl || "",
+                    Date.now()
+                ]
+            );
+
+            res.status(201).json({
+                success: true,
+                message: "Student added successfully",
+                student: result.rows[0]
+            });
+
+        } catch (error) {
+
+            console.error("Add student error:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+GET STUDENTS
+========================================
+*/
+
+app.get(
+    "/api/students",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const result = await pool.query(
+                `SELECT
+                    id,
+                    student_name,
+                    parent_name,
+                    mobile,
+                    roll_number,
+                    username,
+                    photo_url,
+                    created_at
+                 FROM students
+                 WHERE teacher_id = $1
+                 ORDER BY roll_number`,
+                [req.user.teacherId]
+            );
+
+            res.json({
+                success: true,
+                students: result.rows
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+GET ONE STUDENT
+========================================
+*/
+
+app.get(
+    "/api/students/:id",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const result = await pool.query(
+                `SELECT
+                    id,
+                    student_name,
+                    parent_name,
+                    mobile,
+                    roll_number,
+                    username,
+                    photo_url,
+                    created_at
+                 FROM students
+                 WHERE id = $1
+                 AND teacher_id = $2`,
+                [
+                    req.params.id,
+                    req.user.teacherId
+                ]
+            );
+
+            if (result.rows.length === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message: "Student not found"
+                });
+            }
+
+            res.json({
+                success: true,
+                student: result.rows[0]
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+UPDATE STUDENT
+========================================
+*/
+
+app.put(
+    "/api/students/:id",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const {
+                studentName,
+                parentName,
+                mobile,
+                rollNumber,
+                username,
+                photoUrl
+            } = req.body;
+
+            const result = await pool.query(
+                `UPDATE students
+                 SET
+                    student_name = $1,
+                    parent_name = $2,
+                    mobile = $3,
+                    roll_number = $4,
+                    username = $5,
+                    photo_url = $6
+                 WHERE id = $7
+                 AND teacher_id = $8
+                 RETURNING
+                    id,
+                    student_name,
+                    parent_name,
+                    mobile,
+                    roll_number,
+                    username,
+                    photo_url`,
+                [
+                    studentName,
+                    parentName,
+                    mobile,
+                    rollNumber,
+                    username,
+                    photoUrl || "",
+                    req.params.id,
+                    req.user.teacherId
+                ]
+            );
+
+            if (result.rows.length === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message: "Student not found"
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Student updated successfully",
+                student: result.rows[0]
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+DELETE STUDENT
+========================================
+*/
+
+app.delete(
+    "/api/students/:id",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const result = await pool.query(
+                `DELETE FROM students
+                 WHERE id = $1
+                 AND teacher_id = $2
+                 RETURNING id`,
+                [
+                    req.params.id,
+                    req.user.teacherId
+                ]
+            );
+
+            if (result.rows.length === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message: "Student not found"
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Student deleted successfully"
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+MARK ATTENDANCE
+========================================
+*/
+
+app.post(
+    "/api/attendance",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const {
+                studentId,
+                attendanceDate,
+                status
+            } = req.body;
+
+            if (
+                !studentId ||
+                !attendanceDate ||
+                !status
+            ) {
+
+                return res.status(400).json({
+                    success: false,
+                    message: "studentId, attendanceDate and status are required"
+                });
+            }
+
+            if (
+                status !== "PRESENT" &&
+                status !== "ABSENT"
+            ) {
+
+                return res.status(400).json({
+                    success: false,
+                    message: "Status must be PRESENT or ABSENT"
+                });
+            }
+
+            const student = await pool.query(
+                `SELECT id
+                 FROM students
+                 WHERE id = $1
+                 AND teacher_id = $2`,
+                [
+                    studentId,
+                    req.user.teacherId
+                ]
+            );
+
+            if (student.rows.length === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message: "Student not found"
+                });
+            }
+
+            const attendanceId = crypto.randomUUID();
+
+            const now = Date.now();
+
+            const result = await pool.query(
+                `INSERT INTO attendance
+                (
+                    id,
+                    student_id,
+                    teacher_id,
+                    attendance_date,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7)
+                ON CONFLICT (student_id, attendance_date)
+                DO UPDATE SET
+                    status = EXCLUDED.status,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING *`,
+                [
+                    attendanceId,
+                    studentId,
+                    req.user.teacherId,
+                    attendanceDate,
+                    status,
+                    now,
+                    now
+                ]
+            );
+
+            res.json({
+                success: true,
+                message: "Attendance saved successfully",
+                attendance: result.rows[0]
+            });
+
+        } catch (error) {
+
+            console.error("Attendance error:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+GET STUDENT ATTENDANCE
+========================================
+*/
+
+app.get(
+    "/api/attendance/student/:studentId",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const result = await pool.query(
+                `SELECT
+                    id,
+                    student_id,
+                    attendance_date,
+                    status,
+                    created_at,
+                    updated_at
+                 FROM attendance
+                 WHERE student_id = $1
+                 AND teacher_id = $2
+                 ORDER BY attendance_date DESC`,
+                [
+                    req.params.studentId,
+                    req.user.teacherId
+                ]
+            );
+
+            res.json({
+                success: true,
+                attendance: result.rows
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+/*
+========================================
+GET ATTENDANCE BY DATE
+========================================
+*/
+
+app.get(
+    "/api/attendance/date/:date",
+    authenticateToken,
+    async (req, res) => {
+
+        try {
+
+            const result = await pool.query(
+                `SELECT
+                    a.id,
+                    a.student_id,
+                    s.student_name,
+                    s.roll_number,
+                    a.attendance_date,
+                    a.status
+                 FROM attendance a
+                 JOIN students s
+                   ON s.id = a.student_id
+                 WHERE a.teacher_id = $1
+                 AND a.attendance_date = $2
+                 ORDER BY s.roll_number`,
+                [
+                    req.user.teacherId,
+                    req.params.date
+                ]
+            );
+
+            res.json({
+                success: true,
+                attendance: result.rows
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+// ===============================
+// UPLOAD HOMEWORK IMAGE
+// ===============================
+app.post(
+    "/api/homework/:homeworkId/images",
+    authenticateToken,
+    upload.single("image"),
+    async (req, res) => {
+        try {
+            const { homeworkId } = req.params;
+
+            const teacherId = req.user.teacherId;
+
+            // Check homework belongs to this teacher
+            const homeworkResult = await pool.query(
+                `SELECT id, homework_date
+                 FROM homework
+                 WHERE id = $1
+                 AND teacher_id = $2`,
+                [homeworkId, teacherId]
+            );
+
+            if (homeworkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Homework not found"
+                });
+            }
+
+            // Check image was uploaded
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Image is required"
+                });
+            }
+
+            // Check maximum 5 images
+            const countResult = await pool.query(
+                `SELECT COUNT(*)::int AS image_count
+                 FROM homework_images
+                 WHERE homework_id = $1`,
+                [homeworkId]
+            );
+
+            const imageCount = countResult.rows[0].image_count;
+
+            if (imageCount >= 5) {
+
+                // Remove uploaded file because limit exceeded
+                fs.unlinkSync(req.file.path);
+
+                return res.status(400).json({
+                    success: false,
+                    message: "Maximum 5 images allowed for this homework date"
+                });
+            }
+
+            const imageId = crypto.randomUUID();
+            const imageOrder = imageCount + 1;
+            const now = Date.now();
+
+            const imageUrl =
+                `/uploads/homework/${req.file.filename}`;
+
+            const result = await pool.query(
+                `INSERT INTO homework_images (
+                    id,
+                    homework_id,
+                    image_url,
+                    file_name,
+                    image_order,
+                    created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING
+                    id,
+                    homework_id,
+                    image_url,
+                    file_name,
+                    image_order,
+                    created_at`,
+                [
+                    imageId,
+                    homeworkId,
+                    imageUrl,
+                    req.file.originalname,
+                    imageOrder,
+                    now
+                ]
+            );
+
+            return res.status(201).json({
+                success: true,
+                message: "Homework image uploaded successfully",
+                image: result.rows[0]
+            });
+
+        } catch (error) {
+
+            console.error("Homework image upload error:", error);
+
+            // Remove uploaded file if database operation fails
+            if (req.file && fs.existsSync(req.file.path)) {
+                fs.unlinkSync(req.file.path);
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+// ===============================
+// CREATE / PUBLISH HOMEWORK
+// ===============================
+app.post("/api/homework", authenticateToken, async (req, res) => {
+    try {
+        const {
+            homeworkDate,
+            homeworkText,
+            published
+        } = req.body;
+
+        // Date is required
+        if (!homeworkDate) {
+            return res.status(400).json({
+                success: false,
+                message: "Homework date is required"
+            });
+        }
+
+        // Teacher ID comes from teacher JWT
+        const teacherId = req.user.teacherId;
+
+        // Text is optional
+        const newText = homeworkText
+            ? homeworkText.trim()
+            : "";
+
+        const isPublished = published === undefined
+            ? true
+            : Boolean(published);
+
+        // ==========================================
+        // CHECK IF HOMEWORK ALREADY EXISTS
+        // ==========================================
+        const existingResult = await pool.query(
+            `SELECT
+                id,
+                teacher_id,
+                homework_date,
+                homework_text,
+                published,
+                created_at,
+                updated_at
+             FROM homework
+             WHERE teacher_id = $1
+             AND homework_date = $2`,
+            [teacherId, homeworkDate]
+        );
+
+        // ==========================================
+        // HOMEWORK ALREADY EXISTS
+        // ==========================================
+        if (existingResult.rows.length > 0) {
+
+            const existingHomework = existingResult.rows[0];
+
+            let finalText = existingHomework.homework_text || "";
+
+            // Append only when new text is provided
+            if (newText !== "") {
+
+                if (finalText !== "") {
+                    finalText = finalText + "\n" + newText;
+                } else {
+                    finalText = newText;
+                }
+            }
+
+            const now = Date.now();
+
+            const updateResult = await pool.query(
+                `UPDATE homework
+                 SET
+                    homework_text = $1,
+                    published = $2,
+                    updated_at = $3
+                 WHERE id = $4
+                 RETURNING
+                    id,
+                    teacher_id,
+                    homework_date,
+                    homework_text,
+                    published,
+                    created_at,
+                    updated_at`,
+                [
+                    finalText,
+                    isPublished,
+                    now,
+                    existingHomework.id
+                ]
+            );
+
+            return res.json({
+                success: true,
+                message: "Homework updated successfully",
+                homework: updateResult.rows[0]
+            });
+        }
+
+
+
+// ===============================
+// DELETE HOMEWORK IMAGE
+// ===============================
+
+app.delete(
+    "/api/homework/:homeworkId/images/:imageId",
+    authenticateToken,
+    async (req, res) => {
+        try {
+            const { homeworkId, imageId } = req.params;
+            const teacherId = req.user.teacherId;
+
+            // Check homework belongs to this teacher
+            const homeworkResult = await pool.query(
+                `SELECT id
+                 FROM homework
+                 WHERE id = $1
+                 AND teacher_id = $2`,
+                [homeworkId, teacherId]
+            );
+
+            if (homeworkResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Homework not found"
+                });
+            }
+
+            // Get image
+            const imageResult = await pool.query(
+                `SELECT id, image_url
+                 FROM homework_images
+                 WHERE id = $1
+                 AND homework_id = $2`,
+                [imageId, homeworkId]
+            );
+
+            if (imageResult.rows.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Homework image not found"
+                });
+            }
+
+            const image = imageResult.rows[0];
+
+            // Delete physical image file
+            const imagePath = path.join(
+                __dirname,
+                image.image_url
+            );
+
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
+            }
+
+            // Delete image from database
+            await pool.query(
+                `DELETE FROM homework_images
+                 WHERE id = $1
+                 AND homework_id = $2`,
+                [imageId, homeworkId]
+            );
+
+            // Re-number remaining images
+            await pool.query(
+                `WITH ordered_images AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            ORDER BY created_at ASC
+                        ) AS new_order
+                    FROM homework_images
+                    WHERE homework_id = $1
+                )
+                UPDATE homework_images hi
+                SET image_order = oi.new_order
+                FROM ordered_images oi
+                WHERE hi.id = oi.id`,
+                [homeworkId]
+            );
+
+            return res.status(200).json({
+                success: true,
+                message: "Homework image deleted successfully"
+            });
+
+        } catch (error) {
+            console.error("Homework image delete error:", error);
+
+            return res.status(500).json({
+                success: false,
+                message: "Server error"
+            });
+        }
+    }
+);
+
+
+
+
+
+
+
+        // ==========================================
+        // CREATE NEW HOMEWORK
+        // ==========================================
+        const homeworkId = crypto.randomUUID();
+        const now = Date.now();
+
+        const insertResult = await pool.query(
+            `INSERT INTO homework (
+                id,
+                teacher_id,
+                homework_date,
+                homework_text,
+                published,
+                created_at,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING
+                id,
+                teacher_id,
+                homework_date,
+                homework_text,
+                published,
+                created_at,
+                updated_at`,
+            [
+                homeworkId,
+                teacherId,
+                homeworkDate,
+                newText,
+                isPublished,
+                now,
+                now
+            ]
+        );
+
+        return res.status(201).json({
+            success: true,
+            message: "Homework published successfully",
+            homework: insertResult.rows[0]
+        });
+
+    } catch (error) {
+
+        console.error("Create/update homework error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+// GET HOMEWORK LIST
+app.get("/api/homework", authenticateToken, async (req, res) => {
+    try {
+        const teacherId = req.user.teacherId;
+
+        const result = await pool.query(
+            `SELECT
+                h.id,
+                h.homework_date,
+                h.homework_text,
+                h.published,
+                h.created_at,
+                h.updated_at,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'id', hi.id,
+                            'imageUrl', hi.image_url,
+                            'fileName', hi.file_name,
+                            'imageOrder', hi.image_order
+                        )
+                        ORDER BY hi.image_order
+                    ) FILTER (WHERE hi.id IS NOT NULL),
+                    '[]'
+                ) AS images
+             FROM homework h
+             LEFT JOIN homework_images hi
+                ON hi.homework_id = h.id
+             WHERE h.teacher_id = $1
+             GROUP BY
+                h.id,
+                h.homework_date,
+                h.homework_text,
+                h.published,
+                h.created_at,
+                h.updated_at
+             ORDER BY h.homework_date DESC`,
+            [teacherId]
+        );
+
+        const homework = result.rows.map(item => ({
+            id: item.id,
+            homeworkDate: item.homework_date,
+            homeworkText: item.homework_text,
+            published: item.published,
+            createdAt: item.created_at,
+            updatedAt: item.updated_at,
+            images: item.images.map(image => ({
+                id: image.id,
+                imageUrl: `https://api.shivshambhu.co.in${image.imageUrl}`,
+                fileName: image.fileName,
+                imageOrder: image.imageOrder
+            }))
+        }));
+
+        return res.status(200).json({
+            success: true,
+            count: homework.length,
+            homework: homework
+        });
+
+    } catch (error) {
+        console.error("Get homework list error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+// GET HOMEWORK BY DATE
+app.get("/api/homework/date/:date", authenticateToken, async (req, res) => {
+    try {
+        const teacherId = req.user.teacherId;
+        const { date } = req.params;
+
+        const result = await pool.query(
+            `SELECT
+                h.id,
+                h.homework_date,
+                h.homework_text,
+                h.published,
+                h.created_at,
+                h.updated_at,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'id', hi.id,
+                            'imageUrl', hi.image_url,
+                            'fileName', hi.file_name,
+                            'imageOrder', hi.image_order
+                        )
+                        ORDER BY hi.image_order
+                    ) FILTER (WHERE hi.id IS NOT NULL),
+                    '[]'
+                ) AS images
+             FROM homework h
+             LEFT JOIN homework_images hi
+                ON hi.homework_id = h.id
+             WHERE h.teacher_id = $1
+             AND h.homework_date = $2
+             GROUP BY
+                h.id,
+                h.homework_date,
+                h.homework_text,
+                h.published,
+                h.created_at,
+                h.updated_at`,
+            [teacherId, date]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "No homework found for this date"
+            });
+        }
+
+        const item = result.rows[0];
+
+        const homework = {
+            id: item.id,
+            homeworkDate: item.homework_date,
+            homeworkText: item.homework_text,
+            published: item.published,
+            createdAt: item.created_at,
+            updatedAt: item.updated_at,
+            images: item.images.map(image => ({
+                id: image.id,
+                imageUrl: `https://api.shivshambhu.co.in${image.imageUrl}`,
+                fileName: image.fileName,
+                imageOrder: image.imageOrder
+            }))
+        };
+
+        return res.status(200).json({
+            success: true,
+            homework: homework
+        });
+
+    } catch (error) {
+        console.error("Get homework by date error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+// DELETE HOMEWORK
+app.delete("/api/homework/:homeworkId", authenticateToken, async (req, res) => {
+    try {
+        const { homeworkId } = req.params;
+        const teacherId = req.user.teacherId;
+
+        // Get homework and verify ownership
+        const homeworkResult = await pool.query(
+            `SELECT id
+             FROM homework
+             WHERE id = $1
+             AND teacher_id = $2`,
+            [homeworkId, teacherId]
+        );
+
+        if (homeworkResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Homework not found"
+            });
+        }
+
+        // Get image files before deleting database records
+        const imagesResult = await pool.query(
+            `SELECT image_url
+             FROM homework_images
+             WHERE homework_id = $1`,
+            [homeworkId]
+        );
+
+        // Delete homework
+        // homework_images will be deleted automatically
+        // because of ON DELETE CASCADE.
+        await pool.query(
+            `DELETE FROM homework
+             WHERE id = $1
+             AND teacher_id = $2`,
+            [homeworkId, teacherId]
+        );
+
+        // Delete physical image files
+        for (const image of imagesResult.rows) {
+            if (image.image_url) {
+                const relativePath = image.image_url.replace(/^\/uploads\//, "");
+                const filePath = path.join(__dirname, "uploads", relativePath);
+
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Homework deleted successfully"
+        });
+
+    } catch (error) {
+        console.error("Delete homework error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+// UPDATE HOMEWORK
+app.put("/api/homework/:homeworkId", authenticateToken, async (req, res) => {
+    try {
+        const { homeworkId } = req.params;
+        const teacherId = req.user.teacherId;
+
+        const { homeworkText, published } = req.body;
+
+        // Check homework belongs to this teacher
+        const homeworkResult = await pool.query(
+            `SELECT id, homework_date, homework_text, published
+             FROM homework
+             WHERE id = $1
+             AND teacher_id = $2`,
+            [homeworkId, teacherId]
+        );
+
+        if (homeworkResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Homework not found"
+            });
+        }
+
+        const existingHomework = homeworkResult.rows[0];
+
+        // Keep existing values if they are not provided
+        const updatedText =
+            homeworkText !== undefined
+                ? String(homeworkText).trim()
+                : existingHomework.homework_text;
+
+        const updatedPublished =
+            published !== undefined
+                ? Boolean(published)
+                : existingHomework.published;
+
+        const now = Date.now();
+
+        const updateResult = await pool.query(
+            `UPDATE homework
+             SET homework_text = $1,
+                 published = $2,
+                 updated_at = $3
+             WHERE id = $4
+             AND teacher_id = $5
+             RETURNING
+                 id,
+                 homework_date,
+                 homework_text,
+                 published,
+                 created_at,
+                 updated_at`,
+            [
+                updatedText,
+                updatedPublished,
+                now,
+                homeworkId,
+                teacherId
+            ]
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Homework updated successfully",
+            homework: updateResult.rows[0]
+        });
+
+    } catch (error) {
+        console.error("Update homework error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+    }
+});
+
+
+// DELETE TEACHER ACCOUNT AND ALL RELATED DATA
+app.delete("/api/auth/account", authenticateToken, async (req, res) => {
+    const client = await pool.connect();
+
+    try {
+        const teacherId = req.user.teacherId;
+
+        // Get homework image files before database deletion
+        const imagesResult = await client.query(
+            `SELECT hi.image_url
+             FROM homework_images hi
+             INNER JOIN homework h
+                 ON h.id = hi.homework_id
+             WHERE h.teacher_id = $1`,
+            [teacherId]
+        );
+
+        // Check teacher exists
+        const teacherResult = await client.query(
+            `SELECT id
+             FROM teachers
+             WHERE id = $1`,
+            [teacherId]
+        );
+
+        if (teacherResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "Teacher account not found"
+            });
+        }
+
+        await client.query("BEGIN");
+
+        // Delete teacher.
+        // Database ON DELETE CASCADE removes:
+        // students
+        // attendance
+        // homework
+        // homework_images
+        const deleteResult = await client.query(
+            `DELETE FROM teachers
+             WHERE id = $1
+             RETURNING id`,
+            [teacherId]
+        );
+
+        if (deleteResult.rows.length === 0) {
+            await client.query("ROLLBACK");
+
+            return res.status(404).json({
+                success: false,
+                message: "Teacher account not found"
+            });
+        }
+
+        await client.query("COMMIT");
+
+        // Delete physical homework image files
+        for (const image of imagesResult.rows) {
+            if (!image.image_url) {
+                continue;
+            }
+
+            const relativePath = image.image_url.replace(
+                /^\/uploads\//,
+                ""
+            );
+
+            const filePath = path.join(
+                __dirname,
+                "uploads",
+                relativePath
+            );
+
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            } catch (fileError) {
+                console.error(
+                    "Failed to delete homework image:",
+                    filePath,
+                    fileError
+                );
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Teacher account and all related data deleted successfully"
+        });
+
+    } catch (error) {
+        try {
+            await client.query("ROLLBACK");
+        } catch (rollbackError) {
+            console.error("Rollback error:", rollbackError);
+        }
+
+        console.error("Delete teacher account error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Server error"
+        });
+
+    } finally {
+        client.release();
+    }
+});
+
+/*
+========================================
+START SERVER
+========================================
+*/
+
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, "127.0.0.1", () => {
+
+    console.log(
+        `Class API running on http://127.0.0.1:${PORT}`
+    );
+
+});

@@ -1,0 +1,46 @@
+const express = require("express");
+const controller = require("./studentSubjects.controller");
+const { requireTeacher } = require("../../middleware/teacherAuth");
+const {
+    requireClassTeacher,
+    requireStudentOwnClass
+} = require("../../middleware/classTeacherAuth");
+
+const router = express.Router();
+
+router.get(
+    "/student/:studentId",
+    requireTeacher,
+    requireClassTeacher,
+    controller.getStudentSubjects
+);
+
+router.get(
+    "/:id",
+    requireTeacher,
+    requireClassTeacher,
+    controller.getAssignmentById
+);
+
+router.post(
+    "/",
+    requireTeacher,
+    requireClassTeacher,
+    controller.createAssignment
+);
+
+router.patch(
+    "/:id/status",
+    requireTeacher,
+    requireClassTeacher,
+    controller.updateAssignmentStatus
+);
+
+router.delete(
+    "/:id",
+    requireTeacher,
+    requireClassTeacher,
+    controller.deleteAssignment
+);
+
+module.exports = router;

@@ -1,0 +1,331 @@
+const crypto = require("crypto");
+const homeworkRepository = require("./homework.repository");
+const teachersRepository = require("../teachers/teachers.repository");
+const classesRepository = require("../classes/classes.repository");
+const subjectsRepository = require("../subjects/subjects.repository");
+const teacherAssignmentsRepository = require("../teacherAssignments/teacherAssignments.repository");
+const teacherPermissionsRepository = require("../teacherPermissions/teacherPermissions.repository");
+
+function generateId() {
+    return crypto.randomUUID();
+}
+
+function validateDate(date) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(date);
+}
+
+async function verifyHomeworkAccess(teacherId, classId, subjectId) {
+    const teacher = await teachersRepository.findById(teacherId);
+
+    if (!teacher || !teacher.is_active) {
+        throw new Error("Teacher not found or inactive");
+    }
+
+    const classItem = await classesRepository.findById(classId);
+
+    if (!classItem || !classItem.is_active) {
+        throw new Error("Class not found or inactive");
+    }
+
+    const subject = await subjectsRepository.findById(subjectId);
+
+    if (!subject || !subject.is_active) {
+        throw new Error("Subject not found or inactive");
+    }
+
+    const assignments =
+        await teacherAssignmentsRepository.findByTeacher(teacherId);
+
+    const assignment = assignments.find(
+        (item) =>
+            item.class_id === classId &&
+            item.subject_id === subjectId &&
+            item.is_active
+    );
+
+    if (!assignment) {
+        throw new Error(
+            "Teacher is not assigned to this class and subject"
+        );
+    }
+
+    const permissions =
+        await teacherPermissionsRepository.findByTeacherId(teacherId);
+
+    if (permissions && !permissions.homework_enabled) {
+        throw new Error("Homework permission is disabled");
+    }
+
+    return {
+        teacher,
+        classItem,
+        subject,
+        assignment
+    };
+}
+
+async function getHomeworkById(id) {
+    const homework = await homeworkRepository.findById(id);
+
+    if (!homework) {
+        throw new Error("Homework not found");
+    }
+
+    const images = await homeworkRepository.findImages(id);
+
+    return {
+        ...homework,
+        images
+    };
+}
+
+async function getTeacherHomework(teacherId) {
+    return homeworkRepository.findByTeacher(teacherId);
+}
+
+async function getClassSubjectHomework(classId, subjectId) {
+    return homeworkRepository.findByClassAndSubject(
+        classId,
+        subjectId
+    );
+}
+
+async function createHomework({
+    teacherId,
+    classId,
+    subjectId,
+    homeworkDate,
+    homeworkText,
+    published = false
+}) {
+    if (
+        !teacherId ||
+        !classId ||
+        !subjectId ||
+        !homeworkDate
+    ) {
+        throw new Error(
+            "classId, subjectId and homeworkDate are required"
+        );
+    }
+
+    if (!validateDate(homeworkDate)) {
+        throw new Error(
+            "homeworkDate must be in YYYY-MM-DD format"
+        );
+    }
+
+    await verifyHomeworkAccess(
+        teacherId,
+        classId,
+        subjectId
+    );
+
+    const existing =
+        await homeworkRepository.findExisting(
+            teacherId,
+            classId,
+            subjectId,
+            homeworkDate
+        );
+
+    if (existing) {
+        throw new Error(
+            "Homework already exists for this class, subject and date"
+        );
+    }
+
+    const now = Date.now();
+
+    const homework =
+        await homeworkRepository.createHomework({
+            id: generateId(),
+            teacherId,
+            classId,
+            subjectId,
+            homeworkDate,
+            homeworkText: homeworkText || "",
+            published: Boolean(published),
+            createdAt: now
+        });
+
+    return {
+        ...homework,
+        images: []
+    };
+}
+
+async function updateHomework({
+    id,
+    teacherId,
+    homeworkDate,
+    homeworkText
+}) {
+    const existing =
+        await homeworkRepository.findById(id);
+
+    if (!existing) {
+        throw new Error("Homework not found");
+    }
+
+    await verifyHomeworkAccess(
+        teacherId,
+        existing.class_id,
+        existing.subject_id
+    );
+
+    if (
+        homeworkDate !== undefined &&
+        !validateDate(homeworkDate)
+    ) {
+        throw new Error(
+            "homeworkDate must be in YYYY-MM-DD format"
+        );
+    }
+
+    const updated =
+        await homeworkRepository.updateHomework({
+            id,
+            homeworkDate:
+                homeworkDate !== undefined
+                    ? homeworkDate
+                    : existing.homework_date,
+            homeworkText:
+                homeworkText !== undefined
+                    ? homeworkText
+                    : existing.homework_text,
+            updatedAt: Date.now()
+        });
+
+    return updated;
+}
+
+async function updatePublished({
+    id,
+    teacherId,
+    published
+}) {
+    const existing =
+        await homeworkRepository.findById(id);
+
+    if (!existing) {
+        throw new Error("Homework not found");
+    }
+
+    await verifyHomeworkAccess(
+        teacherId,
+        existing.class_id,
+        existing.subject_id
+    );
+
+    return homeworkRepository.updatePublished(
+        id,
+        Boolean(published),
+        Date.now()
+    );
+}
+
+async function deleteHomework(id, teacherId) {
+    const existing =
+        await homeworkRepository.findById(id);
+
+    if (!existing) {
+        throw new Error("Homework not found");
+    }
+
+    await verifyHomeworkAccess(
+        teacherId,
+        existing.class_id,
+        existing.subject_id
+    );
+
+    return homeworkRepository.deleteHomework(id);
+}
+
+async function addImage({
+    homeworkId,
+    teacherId,
+    imageUrl,
+    fileName,
+    imageOrder
+}) {
+    const homework =
+        await homeworkRepository.findById(homeworkId);
+
+    if (!homework) {
+        throw new Error("Homework not found");
+    }
+
+    await verifyHomeworkAccess(
+        teacherId,
+        homework.class_id,
+        homework.subject_id
+    );
+
+    const images =
+        await homeworkRepository.findImages(homeworkId);
+
+    if (images.length >= 5) {
+        throw new Error(
+            "Maximum 5 images are allowed per homework"
+        );
+    }
+
+    const order =
+        imageOrder !== undefined
+            ? Number(imageOrder)
+            : images.length + 1;
+
+    if (!Number.isInteger(order) || order < 1 || order > 5) {
+        throw new Error(
+            "imageOrder must be between 1 and 5"
+        );
+    }
+
+    return homeworkRepository.addImage({
+        id: generateId(),
+        homeworkId,
+        imageUrl,
+        fileName,
+        imageOrder: order,
+        createdAt: Date.now()
+    });
+}
+
+async function deleteImage(imageId, teacherId) {
+    const image =
+        await homeworkRepository.findImageById(imageId);
+
+    if (!image) {
+        throw new Error("Homework image not found");
+    }
+
+    const homework =
+        await homeworkRepository.findById(
+            image.homework_id
+        );
+
+    if (!homework) {
+        throw new Error("Homework not found");
+    }
+
+    await verifyHomeworkAccess(
+        teacherId,
+        homework.class_id,
+        homework.subject_id
+    );
+
+    return homeworkRepository.deleteImage(imageId);
+}
+
+module.exports = {
+    getHomeworkById,
+    getTeacherHomework,
+    getClassSubjectHomework,
+    createHomework,
+    updateHomework,
+    updatePublished,
+    deleteHomework,
+    addImage,
+    deleteImage
+};

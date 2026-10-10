@@ -1,0 +1,219 @@
+const reportsRepository = require("./reports.repository");
+const teacherPermissionsRepository = require("../teacherPermissions/teacherPermissions.repository");
+const classesRepository = require("../classes/classes.repository");
+const studentsRepository = require("../students/students.repository");
+const teacherAssignmentsRepository = require("../teacherAssignments/teacherAssignments.repository");
+
+function validateDate(date) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(date);
+}
+
+function validateDateRange(fromDate, toDate) {
+    if (!fromDate || !toDate) {
+        throw new Error("fromDate and toDate are required");
+    }
+
+    if (!validateDate(fromDate) || !validateDate(toDate)) {
+        throw new Error(
+            "Dates must be in YYYY-MM-DD format"
+        );
+    }
+
+    if (fromDate > toDate) {
+        throw new Error(
+            "fromDate cannot be greater than toDate"
+        );
+    }
+}
+
+async function getClassAttendanceReport(
+    classId,
+    fromDate,
+    toDate
+) {
+    validateDateRange(fromDate, toDate);
+
+    const classItem =
+        await classesRepository.findById(classId);
+
+    if (!classItem) {
+        throw new Error("Class not found");
+    }
+
+    return reportsRepository.getAttendanceByClass(
+        classId,
+        fromDate,
+        toDate
+    );
+}
+
+async function getClassAttendanceSummary(
+    classId,
+    fromDate,
+    toDate
+) {
+    validateDateRange(fromDate, toDate);
+
+    const classItem =
+        await classesRepository.findById(classId);
+
+    if (!classItem) {
+        throw new Error("Class not found");
+    }
+
+    return reportsRepository.getAttendanceSummaryByClass(
+        classId,
+        fromDate,
+        toDate
+    );
+}
+
+async function getClassHomeworkReport(
+    classId,
+    fromDate,
+    toDate
+) {
+    validateDateRange(fromDate, toDate);
+
+    const classItem =
+        await classesRepository.findById(classId);
+
+    if (!classItem) {
+        throw new Error("Class not found");
+    }
+
+    return reportsRepository.getHomeworkByClass(
+        classId,
+        fromDate,
+        toDate
+    );
+}
+
+async function getTeacherReport() {
+    return reportsRepository.getTeacherReport();
+}
+
+async function getStudentReport(classId) {
+    if (!classId) {
+        throw new Error("classId is required");
+    }
+
+    const classItem =
+        await classesRepository.findById(classId);
+
+    if (!classItem) {
+        throw new Error("Class not found");
+    }
+
+    return reportsRepository.getStudentReport(classId);
+}
+
+async function getHomeworkSummary() {
+    return reportsRepository.getHomeworkSummary();
+}
+
+async function getClassTeacherAttendanceReport(
+    teacherId,
+    fromDate,
+    toDate
+) {
+    validateDateRange(fromDate, toDate);
+
+    const assignments =
+        await teacherAssignmentsRepository.findByTeacher(
+            teacherId
+        );
+
+    const classTeacherAssignment =
+        assignments.find(
+            (assignment) =>
+                assignment.is_class_teacher &&
+                assignment.is_active
+        );
+
+    if (!classTeacherAssignment) {
+        throw new Error(
+            "Teacher is not assigned as a Class Teacher"
+        );
+    }
+
+    return reportsRepository.getAttendanceSummaryByClass(
+        classTeacherAssignment.class_id,
+        fromDate,
+        toDate
+    );
+}
+
+async function getClassTeacherHomeworkReport(
+    teacherId,
+    fromDate,
+    toDate
+) {
+    validateDateRange(fromDate, toDate);
+
+    const assignments =
+        await teacherAssignmentsRepository.findByTeacher(
+            teacherId
+        );
+
+    const classTeacherAssignment =
+        assignments.find(
+            (assignment) =>
+                assignment.is_class_teacher &&
+                assignment.is_active
+        );
+
+    if (!classTeacherAssignment) {
+        throw new Error(
+            "Teacher is not assigned as a Class Teacher"
+        );
+    }
+
+    return reportsRepository.getHomeworkByClass(
+        classTeacherAssignment.class_id,
+        fromDate,
+        toDate
+    );
+}
+
+async function getStudentAttendanceReport(studentId) {
+    const student = await studentsRepository.findById(studentId);
+
+    if (!student || !student.is_active) {
+        throw new Error("Student not found");
+    }
+
+    const summary =
+        await reportsRepository.getStudentAttendanceSummary(studentId);
+
+    const totalDays = Number(summary.total_days || 0);
+    const presentDays = Number(summary.present_days || 0);
+    const absentDays = Number(summary.absent_days || 0);
+
+    const attendancePercentage =
+        totalDays > 0
+            ? Number(((presentDays / totalDays) * 100).toFixed(2))
+            : 0;
+
+    return {
+        studentId: student.id,
+        studentName: student.student_name,
+        classId: student.class_id,
+        totalDays,
+        presentDays,
+        absentDays,
+        attendancePercentage
+    };
+}
+
+module.exports = {
+    getClassAttendanceReport,
+    getClassAttendanceSummary,
+    getClassHomeworkReport,
+    getTeacherReport,
+    getStudentReport,
+    getHomeworkSummary,
+    getClassTeacherAttendanceReport,
+    getClassTeacherHomeworkReport,
+    getStudentAttendanceReport
+};
