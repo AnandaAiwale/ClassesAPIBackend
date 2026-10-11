@@ -28,7 +28,8 @@ async function getClassById(req, res) {
 
 async function createClass(req, res) {
     try {
-        const { className, classCode, classTeacherId } = req.body || {};
+        const body = req.body || {};
+        const { className, classCode, classTeacherId } = body;
 
         if (!className || !classCode) {
             return res.status(400).json({
@@ -37,12 +38,18 @@ async function createClass(req, res) {
             });
         }
 
-        const item = await service.createClass({
+        const input = {
             adminId: req.user.id,
             className,
             classCode,
             classTeacherId
-        });
+        };
+
+        if (Object.prototype.hasOwnProperty.call(body, "subjectIds")) {
+            input.subjectIds = body.subjectIds;
+        }
+
+        const item = await service.createClass(input);
 
         return res.status(201).json({
             success: true,
@@ -56,7 +63,8 @@ async function createClass(req, res) {
 
 async function updateClass(req, res) {
     try {
-        const { className, classCode, classTeacherId } = req.body || {};
+        const body = req.body || {};
+        const { className, classCode, classTeacherId } = body;
 
         if (!className || !classCode) {
             return res.status(400).json({
@@ -65,10 +73,16 @@ async function updateClass(req, res) {
             });
         }
 
+        const input = { className, classCode, classTeacherId };
+
+        if (Object.prototype.hasOwnProperty.call(body, "subjectIds")) {
+            input.subjectIds = body.subjectIds;
+        }
+
         const item = await service.updateClass(
             req.params.id,
             req.user.id,
-            { className, classCode, classTeacherId }
+            input
         );
 
         return res.json({

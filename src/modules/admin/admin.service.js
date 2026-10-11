@@ -11,6 +11,34 @@ const { generateToken } = require("../../utils/jwt");
 
 const OTP_SERVICE_URL = "http://127.0.0.1:8000";
 
+function localFixedOtpCode() {
+    const host = process.env.DB_HOST;
+    const isLocalHost = host === "127.0.0.1" || host === "localhost";
+    const code = process.env.OTP_FIXED_CODE;
+
+    if (!isLocalHost || !code) {
+        return null;
+    }
+
+    return String(code);
+}
+
+function matchesLocalFixedOtp(otp, failureMessage) {
+    const code = localFixedOtpCode();
+
+    if (!code) {
+        return false;
+    }
+
+    if (String(otp).trim() !== code) {
+        const error = new Error(failureMessage);
+        error.statusCode = 400;
+        throw error;
+    }
+
+    return true;
+}
+
 
 
 async function createAdmin({ name, email, password, mobile = "" }) {
@@ -144,6 +172,12 @@ async function sendOtp(email, purpose = "login") {
         }
     }
 
+    if (localFixedOtpCode()) {
+        return {
+            message: "OTP sent successfully"
+        };
+    }
+
     const response = await fetch(`${OTP_SERVICE_URL}/send-otp`, {
         method: "POST",
         headers: {
@@ -196,6 +230,10 @@ async function verifyOtp(email, otp, purpose = "login") {
         throw error;
     }
 
+    if (matchesLocalFixedOtp(otp, "Invalid or expired OTP")) {
+        return createAdminToken(admin);
+    }
+
     const response = await fetch(`${OTP_SERVICE_URL}/verify-otp`, {
         method: "POST",
         headers: {
@@ -227,6 +265,9 @@ async function verifyOtp(email, otp, purpose = "login") {
 async function verifyRegistrationOtp({ email, otp, name, password, mobile = "" }) {
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
+    if (matchesLocalFixedOtp(otp, "Invalid or expired registration OTP")) {
+        // Local testing accepts OTP_FIXED_CODE and does not call port 8000.
+    } else {
     // Consume and verify an OTP issued specifically for registration.
     const response = await fetch(`${OTP_SERVICE_URL}/verify-otp`, {
         method: "POST",
@@ -248,6 +289,7 @@ async function verifyRegistrationOtp({ email, otp, name, password, mobile = "" }
             ? response.status
             : 502;
         throw error;
+    }
     }
 
     const passwordHash = await hashPassword(password);
