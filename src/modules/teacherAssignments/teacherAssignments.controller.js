@@ -40,7 +40,8 @@ async function getTeacherAssignments(req, res) {
 async function getClassAssignments(req, res) {
     try {
         const assignments = await service.getClassAssignments(
-            req.params.classId
+            req.params.classId,
+            req.user.id
         );
 
         return res.json({
@@ -76,6 +77,7 @@ async function createAssignment(req, res) {
         }
 
         const assignment = await service.createAssignment({
+            adminId: req.user.id,
             teacherId,
             classId,
             subjectId,

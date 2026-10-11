@@ -29,8 +29,8 @@ async function getTeacherAssignments(teacherId) {
     return repository.findByTeacher(teacherId);
 }
 
-async function getClassAssignments(classId) {
-    const classData = await classRepository.findById(classId);
+async function getClassAssignments(classId, adminId) {
+    const classData = await classRepository.findById(classId, adminId);
 
     if (!classData) {
         const error = new Error("Class not found");
@@ -42,6 +42,7 @@ async function getClassAssignments(classId) {
 }
 
 async function createAssignment({
+    adminId,
     teacherId,
     classId,
     subjectId,
@@ -61,7 +62,7 @@ async function createAssignment({
         throw error;
     }
 
-    const classData = await classRepository.findById(classId);
+    const classData = await classRepository.findById(classId, adminId);
 
     if (!classData) {
         const error = new Error("Class not found");
