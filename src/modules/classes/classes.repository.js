@@ -83,11 +83,19 @@ async function findAll(adminId) {
 }
 
 async function findById(id, adminId) {
+    const params = [id];
+    let where = "WHERE id = $1";
+
+    if (adminId) {
+        where += " AND admin_id = $2";
+        params.push(adminId);
+    }
+
     const result = await pool.query(
         `SELECT ${RETURNING_FIELDS}
          FROM classes
-         WHERE id = $1 AND admin_id = $2`,
-        [id, adminId]
+         ${where}`,
+        params
     );
 
     const row = result.rows[0] || null;
