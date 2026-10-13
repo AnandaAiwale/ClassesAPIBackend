@@ -16,7 +16,6 @@ router.get(
     requireTeacher,
     requireClassTeacher,
     requireOwnClass,
-    requireStudentOwnClass,
     controller.getStudentsByClass
 );
 
@@ -33,7 +32,6 @@ router.post(
     requireTeacher,
     requireClassTeacher,
     requireOwnClass,
-    requireStudentOwnClass,
     controller.createStudent
 );
 

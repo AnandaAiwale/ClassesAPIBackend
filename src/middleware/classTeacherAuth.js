@@ -1,8 +1,8 @@
 const pool = require("../config/database");
 
-async function getClassTeacherClass(teacherId) {
+async function getClassTeacherClasses(teacherId) {
     const result = await pool.query(
-        `SELECT
+        `SELECT DISTINCT ON (tcs.class_id)
             tcs.class_id,
             c.class_name,
             c.class_code
@@ -11,11 +11,44 @@ async function getClassTeacherClass(teacherId) {
          WHERE tcs.teacher_id = $1
            AND tcs.is_class_teacher = TRUE
            AND tcs.is_active = TRUE
-         LIMIT 1`,
+         ORDER BY tcs.class_id, c.class_name ASC`,
         [teacherId]
     );
 
-    return result.rows[0] || null;
+    return result.rows;
+}
+
+async function getClassTeacherClass(teacherId) {
+    const classes = await getClassTeacherClasses(teacherId);
+    return classes[0] || null;
+}
+
+function mapClassTeacher(row) {
+    return {
+        classId: row.class_id,
+        className: row.class_name,
+        classCode: row.class_code
+    };
+}
+
+function teacherOwnsClass(req, classId) {
+    if (!classId) {
+        return false;
+    }
+
+    if (Array.isArray(req.classTeacherClasses)) {
+        return req.classTeacherClasses.some(
+            (item) => item.classId === classId
+        );
+    }
+
+    return Boolean(
+        req.classTeacher && req.classTeacher.classId === classId
+    );
+}
+
+function requestedClassId(req) {
+    return req.params.classId || req.body.classId || req.query.classId;
 }
 
 async function requireClassTeacher(req, res, next) {
@@ -27,22 +60,37 @@ async function requireClassTeacher(req, res, next) {
             });
         }
 
-        const classTeacherClass = await getClassTeacherClass(
+        const classTeacherClasses = await getClassTeacherClasses(
             req.user.id
         );
 
-        if (!classTeacherClass) {
+        if (classTeacherClasses.length === 0) {
             return res.status(403).json({
                 success: false,
                 message: "Teacher is not assigned as a Class Teacher"
             });
         }
 
-        req.classTeacher = {
-            classId: classTeacherClass.class_id,
-            className: classTeacherClass.class_name,
-            classCode: classTeacherClass.class_code
-        };
+        req.classTeacherClasses = classTeacherClasses.map(mapClassTeacher);
+
+        const classId = requestedClassId(req);
+
+        if (classId) {
+            const matched = classTeacherClasses.find(
+                (row) => row.class_id === classId
+            );
+
+            if (!matched) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You can manage students only in your own class"
+                });
+            }
+
+            req.classTeacher = mapClassTeacher(matched);
+        } else {
+            req.classTeacher = mapClassTeacher(classTeacherClasses[0]);
+        }
 
         next();
     } catch (error) {
@@ -57,26 +105,23 @@ async function requireClassTeacher(req, res, next) {
 
 async function requireOwnClass(req, res, next) {
     try {
-        if (!req.classTeacher) {
+        if (!req.classTeacher && !req.classTeacherClasses) {
             return res.status(403).json({
                 success: false,
                 message: "Class Teacher authorization required"
             });
         }
 
-        const requestedClassId =
-            req.params.classId ||
-            req.body.classId ||
-            req.query.classId;
+        const classId = requestedClassId(req);
 
-        if (!requestedClassId) {
+        if (!classId) {
             return res.status(400).json({
                 success: false,
                 message: "classId is required"
             });
         }
 
-        if (requestedClassId !== req.classTeacher.classId) {
+        if (!teacherOwnsClass(req, classId)) {
             return res.status(403).json({
                 success: false,
                 message: "You can manage students only in your own class"
@@ -94,10 +139,9 @@ async function requireOwnClass(req, res, next) {
     }
 }
 
-
 async function requireStudentOwnClass(req, res, next) {
     try {
-        if (!req.classTeacher) {
+        if (!req.classTeacher && !req.classTeacherClasses) {
             return res.status(403).json({
                 success: false,
                 message: "Class Teacher authorization required"
@@ -105,6 +149,10 @@ async function requireStudentOwnClass(req, res, next) {
         }
 
         const studentId = req.params.id;
+
+        if (!studentId) {
+            return next();
+        }
 
         const result = await pool.query(
             `SELECT class_id
@@ -120,7 +168,7 @@ async function requireStudentOwnClass(req, res, next) {
             });
         }
 
-        if (result.rows[0].class_id !== req.classTeacher.classId) {
+        if (!teacherOwnsClass(req, result.rows[0].class_id)) {
             return res.status(403).json({
                 success: false,
                 message: "You can manage students only in your own class"
@@ -138,10 +186,9 @@ async function requireStudentOwnClass(req, res, next) {
     }
 }
 
-
 async function requireStudentSubjectAssignmentOwnClass(req, res, next) {
     try {
-        if (!req.classTeacher) {
+        if (!req.classTeacher && !req.classTeacherClasses) {
             return res.status(403).json({
                 success: false,
                 message: "Class Teacher authorization required"
@@ -172,7 +219,7 @@ async function requireStudentSubjectAssignmentOwnClass(req, res, next) {
             });
         }
 
-        if (result.rows[0].class_id !== req.classTeacher.classId) {
+        if (!teacherOwnsClass(req, result.rows[0].class_id)) {
             return res.status(403).json({
                 success: false,
                 message: "You can manage student subjects only in your own class"
@@ -193,10 +240,9 @@ async function requireStudentSubjectAssignmentOwnClass(req, res, next) {
     }
 }
 
-
 async function requireStudentSubjectCreateOwnClass(req, res, next) {
     try {
-        if (!req.classTeacher) {
+        if (!req.classTeacher && !req.classTeacherClasses) {
             return res.status(403).json({
                 success: false,
                 message: "Class Teacher authorization required"
@@ -226,7 +272,7 @@ async function requireStudentSubjectCreateOwnClass(req, res, next) {
             });
         }
 
-        if (result.rows[0].class_id !== req.classTeacher.classId) {
+        if (!teacherOwnsClass(req, result.rows[0].class_id)) {
             return res.status(403).json({
                 success: false,
                 message: "You can assign subjects only to students in your own class"
@@ -247,18 +293,9 @@ async function requireStudentSubjectCreateOwnClass(req, res, next) {
     }
 }
 
-module.exports = {
-    requireStudentSubjectCreateOwnClass,
-    requireClassTeacher,
-    requireOwnClass,
-    requireStudentOwnClass,
-    requireStudentSubjectAssignmentOwnClass,
-    getClassTeacherClass
-};
-
 async function requireAttendanceOwnClass(req, res, next) {
     try {
-        if (!req.classTeacher) {
+        if (!req.classTeacher && !req.classTeacherClasses) {
             return res.status(403).json({
                 success: false,
                 message: "Class Teacher authorization required"
@@ -299,9 +336,11 @@ async function requireAttendanceOwnClass(req, res, next) {
             }
 
             classId = result.rows[0].class_id;
+        } else {
+            classId = requestedClassId(req);
         }
 
-        if (classId !== req.classTeacher.classId) {
+        if (!teacherOwnsClass(req, classId)) {
             return res.status(403).json({
                 success: false,
                 message: "You can access attendance only for your own class"
@@ -319,4 +358,13 @@ async function requireAttendanceOwnClass(req, res, next) {
     }
 }
 
-module.exports.requireAttendanceOwnClass = requireAttendanceOwnClass;
+module.exports = {
+    requireStudentSubjectCreateOwnClass,
+    requireClassTeacher,
+    requireOwnClass,
+    requireStudentOwnClass,
+    requireStudentSubjectAssignmentOwnClass,
+    requireAttendanceOwnClass,
+    getClassTeacherClass,
+    getClassTeacherClasses
+};
