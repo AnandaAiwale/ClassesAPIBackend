@@ -2,9 +2,17 @@ const teacherAuthService = require("./teacherAuth.service");
 
 async function login(req, res) {
     try {
-        const { teacherCode, password, classCode } = req.body;
+        const { email, teacherCode, password, classCode } = req.body || {};
 
-        const result = await teacherAuthService.login({
+        if (!password) {
+            return res.status(400).json({
+                success: false,
+                message: "Password is required"
+            });
+        }
+
+        const result = await teacherAuthService.loginFromRequest({
+            email,
             teacherCode,
             password,
             classCode
@@ -18,7 +26,7 @@ async function login(req, res) {
     } catch (error) {
         console.error("Teacher login error:", error);
 
-        return res.status(401).json({
+        return res.status(error.statusCode || 401).json({
             success: false,
             message: error.message || "Teacher login failed"
         });
