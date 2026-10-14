@@ -48,7 +48,12 @@ function teacherOwnsClass(req, classId) {
 }
 
 function requestedClassId(req) {
-    return req.params.classId || req.body.classId || req.query.classId;
+    return (
+        (req.params && req.params.classId) ||
+        (req.body && req.body.classId) ||
+        (req.query && req.query.classId) ||
+        null
+    );
 }
 
 async function requireClassTeacher(req, res, next) {
@@ -366,5 +371,6 @@ module.exports = {
     requireStudentSubjectAssignmentOwnClass,
     requireAttendanceOwnClass,
     getClassTeacherClass,
-    getClassTeacherClasses
+    getClassTeacherClasses,
+    requestedClassId
 };
